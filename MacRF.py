@@ -4,6 +4,7 @@ import pdb
 import os
 from collections import defaultdict, namedtuple
 import mmap
+from operator import attrgetter
 from struct import unpack
 
 class Thing:
@@ -27,7 +28,8 @@ class ResourceFork:
         rdata = self.resource_data = memoryview(mm[self.o_data:self.o_data+self.l_data])
         rmap = self.resource_map = memoryview(mm[self.o_map:self.o_map+self.l_map])
 
-        resources = self.resources = {}
+        resources = self.resources = set()
+        
 
         """
         # Collect the Resources
@@ -49,7 +51,7 @@ class ResourceFork:
         type_list_v = self.resource_map[o_tl:o_nl]
         name_list_v = self.resource_map[o_nl:]
 
-        Resource = namedtuple('Resource', ['type', 'name', 'data'])
+        Resource = namedtuple('Resource', ['type', 'id', 'name', 'data'])
 
         # Type list
         n_types = self.n_types = unpack('>H', type_list_v[:2])[0] + 1
@@ -58,9 +60,10 @@ class ResourceFork:
             qty = p + 1
             assert resource_type not in resources, \
                 "duplicate resource type %s" % resource_type
-            rl = []
-            rd = {}
-            resources[resource_type] = Thing(resource_list = rl, by_name = rd)
+            #rl = []
+            #rd = {}
+            #resources[resource_type] = Thing(resource_list = rl, by_name = rd)
+            #resources[resource_type] = rd
             # Parse reference list for all the resources of this type
             for j in range(qty):
                 rid, o_name, attrs, tmsb, t = unpack('>HHBBH', type_list_v[offset+12*j:offset+12*j+8])
@@ -73,11 +76,14 @@ class ResourceFork:
                 else:
                     name_len = name_list_v[o_name]
                     name = name_list_v[o_name+1:o_name+1+name_len].tobytes()
-                res = Resource(resource_type, name, rdat)
-                rl.append(res)
-                assert name not in rd, \
-                    "Multiple resources of type %d and name %d" % (resource_type, name)
-                rd[name] = res
+                res = Resource(resource_type, rid, name, rdat)
+                assert res not in resources, \
+                    "Duplicate resource %r" % res
+                resources.add(res)
+                #assert name not in rd, \
+                #    "Multiple resources of type %d and name %d" % (resource_type, name)
+                #rd[name] = rdat
+        
         return self
 
     def close(self):
@@ -95,10 +101,6 @@ class ResourceFork:
         """
         l_tl = self.o_name_list - self.o_type_list
         pdb.set_trace()
-
-# Apparently not the address of the imaged data :(
-def v_addr(mv):
-    return int(str(mv).split()[-1][:-1], base=16)
 
 def main():
     import pdb
@@ -123,7 +125,6 @@ def main():
         t = f.types[i]
         print(t.code, t.n, t.offset, t.data, len(t.data), next_addr-this_addr)
 
-    f.rfck()
     pdb.set_trace()
     f.close()
     
