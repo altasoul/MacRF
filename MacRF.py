@@ -1,8 +1,8 @@
 #
 # MacRF - Access to Mac OSX resource forks
-import pdb
 import os
 from collections import defaultdict, namedtuple
+from contextlib import closing
 import mmap
 from operator import attrgetter
 from struct import unpack
@@ -13,12 +13,12 @@ class Thing:
 
 class ResourceFork:
     # OTTA: Make it a context manager
-    def __init__(self):
-        pass
-
-    def open(self, filename):
+    def __init__(self, filename, inData=False):
         self.filename = filename
-        name = os.path.join(filename, '..namedfork/rsrc')
+        if inData:
+            name = filename
+        else:
+            name = os.path.join(filename, '..namedfork/rsrc')
         f = self.f = open(name, 'rb') # OTTA: writing to resource forks        
         mm = self.mappedRF = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ)
         self.o_data, self.o_map, self.l_data, self.l_map = unpack('>IIII', mm[:16])
@@ -29,7 +29,7 @@ class ResourceFork:
         rmap = self.resource_map = memoryview(mm[self.o_map:self.o_map+self.l_map])
 
         resources = self.resources = set()
-        
+        rlft = self.resource_list_from_type = {}
 
         """
         # Collect the Resources
@@ -54,17 +54,20 @@ class ResourceFork:
         Resource = namedtuple('Resource', ['type', 'id', 'name', 'data'])
 
         # Type list
-        n_types = self.n_types = unpack('>H', type_list_v[:2])[0] + 1
+        # "2 bytes Number of resource types in the map minus 1"
+        # Watch out for zero resources!
+        n_types = self.n_types = (unpack('>H', type_list_v[:2])[0] + 1) & 0xffff
         for i in range(n_types):
             resource_type, p, offset = unpack('>4sHH', type_list_v[2+8*i:2+8*(i+1)])
             qty = p + 1
-            assert resource_type not in resources, \
+            assert resource_type not in rlft, \
                 "duplicate resource type %s" % resource_type
             #rl = []
             #rd = {}
             #resources[resource_type] = Thing(resource_list = rl, by_name = rd)
             #resources[resource_type] = rd
             # Parse reference list for all the resources of this type
+            rl = rlft[resource_type] = []
             for j in range(qty):
                 rid, o_name, attrs, tmsb, t = unpack('>HHBBH', type_list_v[offset+12*j:offset+12*j+8])
                 o_rdat = (tmsb<<16) + t
@@ -77,14 +80,38 @@ class ResourceFork:
                     name_len = name_list_v[o_name]
                     name = name_list_v[o_name+1:o_name+1+name_len].tobytes()
                 res = Resource(resource_type, rid, name, rdat)
-                assert res not in resources, \
-                    "Duplicate resource %r" % res
-                resources.add(res)
-                #assert name not in rd, \
-                #    "Multiple resources of type %d and name %d" % (resource_type, name)
-                #rd[name] = rdat
-        
-        return self
+                #assert res not in resources, \
+                #    "Duplicate resource %r" % res
+                #resources.add(res)
+                rl.append(res)
+        #return self
+
+
+    def getResources(self, theType):
+        return self.resource_list_from_type[theType]
+
+    def getTypes(self):
+        return sorted(self.resource_list_from_type.keys())
+
+    def getResource(self, theType, theID):
+        try:
+            for r in self.getResources(theType):
+                assert r.type == theType
+                if r.id == theID:
+                    return r
+            return None
+        except KeyError:
+            return None
+
+    def getNamedResource(self, theType, name):
+        try:
+            for r in self.getResources(theType):
+                assert r.type == theType
+                if r.name == name:
+                    return r
+            return None
+        except KeyError:
+            return None
 
     def close(self):
         self.mappedRF.close()
@@ -100,33 +127,23 @@ class ResourceFork:
             "Not the expected number of resources"
         """
         l_tl = self.o_name_list - self.o_type_list
-        pdb.set_trace()
 
 def main():
-    import pdb
+    import argparse
     from pprint import pprint
     import sys
-    try:
-        name = sys.argv[1]
-    except IndexError:
-        name =  '/Users/soul/Projects/Nova-decode/various/One outfit'
-    rf = ResourceFork()
-    f = rf.open(name)
-    pprint(f.__dict__)
 
-    pdb.set_trace()
-    dls = sum(t.n*len(t.data) for t in f.types)
-    n = sum(t.n for t in f.types)
-    print(f.l_data, dls, f.l_data-dls, n, (f.l_data-dls)/n)
+    parser = argparse.ArgumentParser(description='Mac Resource Fork reading')
+    parser.add_argument('-d', '--indata', action='store_true',
+                        help='Treat the data fork as the resource fork')
+    parser.add_argument('filename')
+    args = parser.parse_args()
+    pprint(args)
 
-    for i in range(len(f.types)-1):
-        this_addr = v_addr(f.types[i].data)
-        next_addr = v_addr(f.types[i+1].data)
-        t = f.types[i]
-        print(t.code, t.n, t.offset, t.data, len(t.data), next_addr-this_addr)
+    with closing(ResourceFork(args.filename, args.indata)) as rf:
+        rf = ResourceFork(args.filename, args.indata)
+        pprint(rf.__dict__)
 
-    pdb.set_trace()
-    f.close()
     
 if __name__ == '__main__':
     main()
