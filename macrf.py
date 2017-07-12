@@ -1,5 +1,6 @@
-#
 # MacRF - Access to Mac OSX resource forks
+# https://developer.apple.com/legacy/library/documentation/mac/pdf/MoreMacintoshToolbox.pdf#page=151
+#
 import os
 from collections import defaultdict, namedtuple
 from contextlib import closing
